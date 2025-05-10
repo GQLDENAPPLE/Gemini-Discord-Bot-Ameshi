@@ -1,49 +1,94 @@
-import discord
 import os
-import google.generativeai as genai
+import asyncio
 import datetime
+import discord
+import google.generativeai as genai
+from google.generativeai.types import HarmCategory, HarmBlockThreshold
 
-# Gemini APIの設定
+# =============================
+# Gemini API 設定
+# =============================
+
 genai.configure(api_key=os.environ["GEMINI_API_KEY"])
-model = genai.GenerativeModel('gemini-2.0-flash')
+
+safety_settings = {
+    HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
+    HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
+    HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
+    HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
+}
+
+model = genai.GenerativeModel(model_name="gemini-2.0-flash", safety_settings=safety_settings)
 chat = model.start_chat(history=[])
 
-# Discordの設定
+# =============================
+# Discord Bot 設定
+# =============================
+
 intents = discord.Intents.default()
 intents.message_content = True
+
 client = discord.Client(intents=intents)
 tree = discord.app_commands.CommandTree(client)
 
-# 許可されたチャンネルIDのリストを環境変数から取得
-allowed_channels_str = os.getenv("ALLOWED_CHANNELS", "")
-ALLOWED_CHANNELS = [int(ch) for ch in allowed_channels_str.split(",") if ch.isdigit()]
+# =============================
+# 環境変数からチャンネル情報を取得
+# =============================
 
-# Botの起動時間を記録
+ALLOWED_CHANNELS = [
+    int(ch) for ch in os.getenv("ALLOWED_CHANNELS", "").split(",") if ch.isdigit()
+]
+
+STATUS_CHANNELS = [
+    int(ch) for ch in os.getenv("STATUS_CHANNELS", "").split(",") if ch.isdigit()
+]
+
+status_messages = []
 start_time = datetime.datetime.utcnow()
 
+# =============================
+# ユーティリティ関数
+# =============================
+
 def split_text(text, chunk_size=1500):
-    """長いテキストを分割する関数"""
+    """長文を分割する関数"""
     return [text[i:i+chunk_size] for i in range(0, len(text), chunk_size)]
+
+# =============================
+# イベント: Bot準備完了時
+# =============================
 
 @client.event
 async def on_ready():
     print(f'{client.user} がオンラインになったんだよね')
     await client.change_presence(activity=discord.Game(name="ぷりゅ"))
-    await tree.sync()  # スラッシュコマンドを同期
+    await tree.sync()
+
+    # ステータスチャンネルに起動メッセージを投稿
+    if STATUS_CHANNELS:
+        for channel_id in STATUS_CHANNELS:
+            channel = client.get_channel(channel_id)
+            if channel:
+                msg = await channel.send("【AI】あめしが再起動されたんだよね")
+                status_messages.append(msg)
+
+        client.loop.create_task(update_status_loop())
+
+# =============================
+# イベント: メッセージ受信時
+# =============================
 
 @client.event
 async def on_message(message):
     if message.author == client.user or message.author.bot:
         return
 
-    # 許可されたチャンネル以外では無視
     if message.channel.id not in ALLOWED_CHANNELS:
         return
 
-    # 生成中のメッセージを送信
     reply = await message.channel.send("ぷりゅぷりゅぷりゅぷりゅ・・・")
 
-    # あめしの特徴を反映させる性格のプロンプト
+    # キャラクター性格プロンプト
     personality_prompt = (
         "あなたは「あめし」、マグロと人間の特徴を兼ね備えた魚人です。"
         "年齢：588歳"
@@ -64,32 +109,65 @@ async def on_message(message):
         "ひかげさんと二人でVTuberをしており、「あめかげ」というコンビ名で活動している。"
         "ひかげさんの情報：人間の男性、不幸体質だけど明るい性格、雨男、定期的にあめしの家に来て作業をしている。あめしには「ひかげさん」と呼ばれている。"
     )
-
-    # 性格を反映させるためにプロンプトを追加
     full_input = personality_prompt + " " + message.content
 
-    # Gemini AIにメッセージを送信
     response = chat.send_message(full_input)
+    response_text = response.text + "ぷりゅ"
 
-    # 返答に口癖「ぷりゅ」を追加
-    response_with_phrase = response.text + "ぷりゅ"
-
-    # 回答を分割し、最初の部分だけ編集、残りは追加送信
-    splitted_text = split_text(response_with_phrase)
-    await reply.edit(content=splitted_text[0])  # 最初のメッセージを編集
-    for chunk in splitted_text[1:]:
+    # 分割して返信
+    chunks = split_text(response_text)
+    await reply.edit(content=chunks[0])
+    for chunk in chunks[1:]:
         await message.channel.send(chunk)
 
-@tree.command(name="status", description="Botの現在のステータスを表示")
-async def status(interaction: discord.Interaction):
-    """Botのステータスを表示するスラッシュコマンド"""
-    uptime = datetime.datetime.utcnow() - start_time
-    latency = round(client.latency * 1000, 2)  # 秒単位なのでミリ秒に変換
+# =============================
+# スラッシュコマンド: /status
+# =============================
 
-    embed = discord.Embed(title="ステータス", color=discord.Color.green())
-    embed.add_field(name="オンライン時間", value=str(uptime).split('.')[0], inline=False)
+@tree.command(name="status", description="【AI】あめしの現在のステータスを表示")
+async def status(interaction: discord.Interaction):
+    uptime = datetime.datetime.utcnow() - start_time
+    latency = round(client.latency * 1000, 2)
+    jst = datetime.timezone(datetime.timedelta(hours=9))
+    start_time_jst = start_time.astimezone(jst).strftime('%Y-%m-%d %H:%M:%S')
+    now_jst = datetime.datetime.now(jst).strftime('%Y-%m-%d %H:%M:%S')
+
+    embed = discord.Embed(title="【AI】あめしのステータス", color=discord.Color.red())
+    embed.add_field(name="起動時刻", value=start_time_jst, inline=False)
+    embed.add_field(name="稼働時間", value=str(uptime).split('.')[0], inline=False)
     embed.add_field(name="応答速度", value=f"{latency} ms", inline=False)
 
     await interaction.response.send_message(embed=embed)
 
-client.run(os.environ['DISCORD_TOKEN'])
+# =============================
+# ステータスメッセージ定期更新ループ
+# =============================
+
+async def update_status_loop():
+    while True:
+        try:
+            uptime = datetime.datetime.utcnow() - start_time
+            latency = round(client.latency * 1000, 2)
+            jst = datetime.timezone(datetime.timedelta(hours=9))
+            start_time_jst = start_time.astimezone(jst).strftime('%Y-%m-%d %H:%M:%S')
+            now_jst = datetime.datetime.now(jst).strftime('%Y-%m-%d %H:%M:%S')
+
+            embed = discord.Embed(title="【AI】あめしのステータス（自動更新）", color=discord.Color.red())
+            embed.add_field(name="起動時刻", value=start_time_jst, inline=False)
+            embed.add_field(name="稼働時間", value=str(uptime).split('.')[0], inline=False)
+            embed.add_field(name="応答速度", value=f"{latency} ms", inline=False)
+            embed.set_footer(text=f"最終更新: {now_jst}")
+
+            for msg in status_messages:
+                await msg.edit(embed=embed)
+
+        except Exception as e:
+            print(f"ステータス更新エラー: {e}")
+
+        await asyncio.sleep(60)
+
+# =============================
+# Bot起動
+# =============================
+
+client.run(os.environ["DISCORD_TOKEN"])
