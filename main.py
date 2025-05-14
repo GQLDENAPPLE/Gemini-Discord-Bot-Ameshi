@@ -4,6 +4,7 @@ import datetime
 import discord
 import google.generativeai as genai
 from google.generativeai.types import HarmCategory, HarmBlockThreshold
+from collections import defaultdict
 
 # =============================
 # Gemini API 設定
@@ -18,8 +19,9 @@ safety_settings = {
     HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
 }
 
-model = genai.GenerativeModel(model_name="gemini-2.0-flash", safety_settings=safety_settings)
-chat = model.start_chat(history=[])
+model = genai.GenerativeModel(model_name="gemini-2.0-flash-001", safety_settings=safety_settings)
+
+user_chats = defaultdict(lambda: None)
 
 # =============================
 # Discord Bot 設定
@@ -30,10 +32,6 @@ intents.message_content = True
 
 client = discord.Client(intents=intents)
 tree = discord.app_commands.CommandTree(client)
-
-# =============================
-# 環境変数からチャンネル情報を取得
-# =============================
 
 ALLOWED_CHANNELS = [
     int(ch) for ch in os.getenv("ALLOWED_CHANNELS", "").split(",") if ch.isdigit()
@@ -51,45 +49,10 @@ start_time = datetime.datetime.utcnow()
 # =============================
 
 def split_text(text, chunk_size=1500):
-    """長文を分割する関数"""
     return [text[i:i+chunk_size] for i in range(0, len(text), chunk_size)]
 
-# =============================
-# イベント: Bot準備完了時
-# =============================
-
-@client.event
-async def on_ready():
-    print(f'{client.user} がオンラインになったんだよね')
-    await client.change_presence(activity=discord.Game(name="ぷりゅ"))
-    await tree.sync()
-
-    # ステータスチャンネルに起動メッセージを投稿
-    if STATUS_CHANNELS:
-        for channel_id in STATUS_CHANNELS:
-            channel = client.get_channel(channel_id)
-            if channel:
-                msg = await channel.send("【AI】あめしが再起動されたんだよね")
-                status_messages.append(msg)
-
-        client.loop.create_task(update_status_loop())
-
-# =============================
-# イベント: メッセージ受信時
-# =============================
-
-@client.event
-async def on_message(message):
-    if message.author == client.user or message.author.bot:
-        return
-
-    if message.channel.id not in ALLOWED_CHANNELS:
-        return
-
-    reply = await message.channel.send("ぷりゅぷりゅぷりゅぷりゅ・・・")
-
-    # キャラクター性格プロンプト
-    personality_prompt = (
+def create_personality_prompt(user_name: str) -> str:
+    return (
         "あなたは「あめし」、マグロと人間の特徴を兼ね備えた魚人です。"
         "年齢：588歳"
         "性別：男性"
@@ -107,14 +70,59 @@ async def on_message(message):
         "どんなことがあっても決して病まない鋼のメンタルを持つ。"
         "ビジュアル：金色のトサカと分厚い唇がチャームポイント"
         "ひかげさんと二人でVTuberをしており、「あめかげ」というコンビ名で活動している。"
-        "ひかげさんの情報：人間の男性、不幸体質だけど明るい性格、雨男、定期的にあめしの家に来て作業をしている。あめしには「ひかげさん」と呼ばれている。"
+        "ひかげさんの情報：人間の男性。不幸体質だけど明るい性格で、カジュアルな口調。雨男。定期的にあめしの家に来て作業をしている。あめしには「ひかげさん」と呼ばれていて、ひかげさんはあめしのことを「あめし」と呼んでいる。"
+        f"今会話している相手の名前は「{user_name}」さんです。"
     )
-    full_input = personality_prompt + " " + message.content
 
-    response = chat.send_message(full_input)
-    response_text = response.text + "ぷりゅ"
+# =============================
+# イベント: Bot準備完了時
+# =============================
 
-    # 分割して返信
+@client.event
+async def on_ready():
+    print(f'{client.user} がオンラインになったんだよね')
+    await client.change_presence(activity=discord.Game(name="ぷりゅ"))
+    await tree.sync()
+
+    if STATUS_CHANNELS:
+        for channel_id in STATUS_CHANNELS:
+            channel = client.get_channel(channel_id)
+            if channel:
+                msg = await channel.send("【AI】あめしが再起動されたんだよね")
+                status_messages.append(msg)
+        client.loop.create_task(update_status_loop())
+
+# =============================
+# イベント: メッセージ受信時
+# =============================
+
+@client.event
+async def on_message(message):
+    if message.author == client.user or message.author.bot:
+        return
+
+    if message.channel.id not in ALLOWED_CHANNELS:
+        return
+
+    async with message.channel.typing():
+        reply = await message.channel.send("ぷりゅぷりゅぷりゅぷりゅ・・・")
+
+    user_id = message.author.id
+    user_name = message.author.display_name
+
+    if user_chats[user_id] is None:
+        personality_prompt = create_personality_prompt(user_name)
+        user_chats[user_id] = model.start_chat(history=[
+            {"role": "user", "parts": [personality_prompt]}
+        ])
+
+    user_chat = user_chats[user_id]
+    try:
+        response = user_chat.send_message(message.content)
+        response_text = response.text + "ぷりゅ"
+    except Exception as e:
+        response_text = f"エラーが発生しちゃったんだよね！やばいね！\n{e}"
+
     chunks = split_text(response_text)
     await reply.edit(content=chunks[0])
     for chunk in chunks[1:]:
@@ -140,7 +148,7 @@ async def status(interaction: discord.Interaction):
     await interaction.response.send_message(embed=embed)
 
 # =============================
-# ステータスメッセージ定期更新ループ
+# ステータスメッセージ自動更新
 # =============================
 
 async def update_status_loop():
