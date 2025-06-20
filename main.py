@@ -19,7 +19,7 @@ safety_settings = {
     HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
 }
 
-model = genai.GenerativeModel(model_name="gemini-2.5-flash-lite-preview-06-17", safety_settings=safety_settings)
+model = genai.GenerativeModel(model_name="gemini-2.5-flash", safety_settings=safety_settings)
 
 user_chats = defaultdict(lambda: None)
 
