@@ -42,7 +42,9 @@ STATUS_CHANNELS = [
 ]
 
 status_messages = []
-start_time = datetime.datetime.utcnow()
+# タイムゾーンをUTCからJST（日本標準時）に変更
+start_time = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=9))) ### 変更 ###
+
 
 # =============================
 # ユーティリティ関数
@@ -81,7 +83,6 @@ def create_personality_prompt(user_name: str) -> str:
 @client.event
 async def on_ready():
     print(f'{client.user} がオンラインになったんだよね')
-    await client.change_presence(activity=discord.Game(name="ぷりゅ"))
     await tree.sync()
 
     if STATUS_CHANNELS:
@@ -91,6 +92,10 @@ async def on_ready():
                 msg = await channel.send("【AI】あめしが再起動されたんだよね")
                 status_messages.append(msg)
         client.loop.create_task(update_status_loop())
+
+    ### 追加 ###
+    # プレゼンスを更新するループタスクを開始
+    client.loop.create_task(update_presence_loop())
 
 # =============================
 # イベント: メッセージ受信時
@@ -134,16 +139,16 @@ async def on_message(message):
 
 @tree.command(name="status", description="【AI】あめしの現在のステータスを表示")
 async def status(interaction: discord.Interaction):
-    uptime = datetime.datetime.utcnow() - start_time
-    latency = round(client.latency * 1000, 2)
     jst = datetime.timezone(datetime.timedelta(hours=9))
-    start_time_jst = start_time.astimezone(jst).strftime('%Y-%m-%d %H:%M:%S')
-    now_jst = datetime.datetime.now(jst).strftime('%Y-%m-%d %H:%M:%S')
+    uptime = datetime.datetime.now(jst) - start_time ### 変更 ###
+    latency = round(client.latency * 1000, 2)
+    start_time_jst = start_time.strftime('%Y-%m-%d %H:%M:%S')
 
     embed = discord.Embed(title="【AI】あめしのステータス", color=discord.Color.red())
     embed.add_field(name="起動時刻", value=start_time_jst, inline=False)
     embed.add_field(name="稼働時間", value=str(uptime).split('.')[0], inline=False)
     embed.add_field(name="応答速度", value=f"{latency} ms", inline=False)
+    embed.add_field(name="会話中の人数", value=f"{len(user_chats)}人", inline=False) ### 追加 ###
 
     await interaction.response.send_message(embed=embed)
 
@@ -154,17 +159,18 @@ async def status(interaction: discord.Interaction):
 async def update_status_loop():
     while True:
         try:
-            uptime = datetime.datetime.utcnow() - start_time
-            latency = round(client.latency * 1000, 2)
             jst = datetime.timezone(datetime.timedelta(hours=9))
-            start_time_jst = start_time.astimezone(jst).strftime('%Y-%m-%d %H:%M:%S')
-            now_jst = datetime.datetime.now(jst).strftime('%Y-%m-%d %H:%M:%S')
+            now_jst = datetime.datetime.now(jst)
+            uptime = now_jst - start_time ### 変更 ###
+            latency = round(client.latency * 1000, 2)
+            start_time_jst = start_time.strftime('%Y-%m-%d %H:%M:%S')
 
             embed = discord.Embed(title="【AI】あめしのステータス（自動更新）", color=discord.Color.red())
             embed.add_field(name="起動時刻", value=start_time_jst, inline=False)
             embed.add_field(name="稼働時間", value=str(uptime).split('.')[0], inline=False)
             embed.add_field(name="応答速度", value=f"{latency} ms", inline=False)
-            embed.set_footer(text=f"最終更新: {now_jst}")
+            embed.add_field(name="会話中の人数", value=f"{len(user_chats)}人", inline=False) ### 追加 ###
+            embed.set_footer(text=f"最終更新: {now_jst.strftime('%Y-%m-%d %H:%M:%S')}")
 
             for msg in status_messages:
                 await msg.edit(embed=embed)
@@ -172,6 +178,45 @@ async def update_status_loop():
         except Exception as e:
             print(f"ステータス更新エラー: {e}")
 
+        await asyncio.sleep(60)
+
+### ここから下を丸ごと追加 ###
+# =============================
+# プレゼンス自動更新
+# =============================
+
+async def update_presence_loop():
+    # Botが完全に準備できるまで待つ
+    await client.wait_until_ready()
+
+    # Botが閉じられるまでループ
+    while not client.is_closed():
+        try:
+            # 1. 再起動した時刻 (JST)
+            start_time_str = start_time.strftime('%H:%M')
+
+            # 2. 再起動からの経過時間
+            jst = datetime.timezone(datetime.timedelta(hours=9))
+            uptime = datetime.datetime.now(jst) - start_time
+            total_seconds = int(uptime.total_seconds())
+            hours = total_seconds // 3600
+            minutes = (total_seconds % 3600) // 60
+            uptime_str = f"{hours}h{minutes}m"
+
+            # 3. 会話中の人数
+            conversations = len(user_chats)
+
+            # ステータスメッセージを作成
+            status_text = f"会話中:{conversations}人 | 稼働時間:{uptime_str} | 起動時刻:{start_time_str}"
+
+            # プレゼンスを更新
+            activity = discord.Game(name=status_text)
+            await client.change_presence(activity=activity)
+
+        except Exception as e:
+            print(f"プレゼンス更新エラー: {e}")
+
+        # 60秒待機
         await asyncio.sleep(60)
 
 # =============================
