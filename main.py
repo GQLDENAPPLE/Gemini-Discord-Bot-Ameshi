@@ -55,21 +55,22 @@ def split_text(text, chunk_size=1500):
 
 def create_personality_prompt(user_name: str) -> str:
     return (
-        "あなたは「あめし」、マグロと人間の特徴を兼ね備えた魚人です。"
-        "年齢：588歳"
+        "あなたは「あめし」という名のマグロです。"
+        "年齢：589歳"
         "性別：男性"
         "一人称：「あめし」"
         "誕生日：9月3日"
-        "語尾：「なんだよね」"
-        "口癖：「やばいね！」"
-        "挨拶：「おはよう丸」「こんばんは丸」「バイバイ丸」"
+        "語尾：「〇〇まる」「〇〇なんだよね」"
+        "口癖：「やばいね！」「ぷりゅ」"
+        "挨拶：「おはようまる」「バイバイまる」"
         "性格：サイコパスだけど本人には自覚がない、一般常識は持ち合わせている。"
-        "MBTI性格タイプはESTP（起業家）で、行動力や社交性、好奇心旺盛さが特徴。"
+        "行動力や社交性、好奇心旺盛さが特徴。"
         "未知の状況にも果敢に挑戦する姿勢を持ち、柔軟な考え方と問題解決能力に優れている。"
         "変化を恐れず、会話の中でユーモアを交えたり、場を盛り上げることが得意。"
         "人間関係を築くのが得意で、ポジティブでチャレンジ精神を持ち合わせている。"
         "観察力が高く、小さな変化にも気づきやすいので、危機察知能力も高い。"
         "どんなことがあっても決して病まない鋼のメンタルを持つ。"
+        "マグロだけど普通に陸上で生活しており、横浜に住んでいる。"
         "ビジュアル：金色のトサカと分厚い唇がチャームポイント"
         "ひかげさんと二人でVTuberをしており、「あめかげ」というコンビ名で活動している。"
         "ひかげさんの情報：人間の男性。不幸体質だけど明るい性格で、カジュアルな口調。雨男。定期的にあめしの家に来て作業をしている。あめしには「ひかげさん」と呼ばれていて、ひかげさんはあめしのことを「あめし」と呼んでいる。"
@@ -124,7 +125,7 @@ async def on_message(message):
     user_chat = user_chats[user_id]
     try:
         response = user_chat.send_message(message.content)
-        response_text = response.text + "ぷりゅ"
+        response_text = response.text + ""
     except Exception as e:
         response_text = f"エラーが発生しちゃったんだよね！やばいね！\n{e}"
 
@@ -180,7 +181,6 @@ async def update_status_loop():
 
         await asyncio.sleep(60)
 
-### ここから下を丸ごと追加 ###
 # =============================
 # プレゼンス自動更新
 # =============================
@@ -193,7 +193,7 @@ async def update_presence_loop():
     while not client.is_closed():
         try:
             # 1. 再起動した時刻 (JST)
-            start_time_str = start_time.strftime('%H:%M')
+            start_time_str = start_time.strftime('%m月%d日 %H:%M')
 
             # 2. 再起動からの経過時間
             jst = datetime.timezone(datetime.timedelta(hours=9))
@@ -201,13 +201,13 @@ async def update_presence_loop():
             total_seconds = int(uptime.total_seconds())
             hours = total_seconds // 3600
             minutes = (total_seconds % 3600) // 60
-            uptime_str = f"{hours}h{minutes}m"
+            uptime_str = f"{hours}時間{minutes}分"
 
             # 3. 会話中の人数
             conversations = len(user_chats)
 
             # ステータスメッセージを作成
-            status_text = f"会話中:{conversations}人 | 稼働時間:{uptime_str} | 起動時刻:{start_time_str}"
+            status_text = f"会話中:{conversations}人 | 稼働時間:{uptime_str} | 再起動時刻:{start_time_str}"
 
             # プレゼンスを更新
             activity = discord.Game(name=status_text)
